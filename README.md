@@ -20,8 +20,8 @@ to *draw* (a fast downward hand flick) wins. Built to be shared on X / TikTok / 
 standoffduel/
 ├── packages/shared   # socket contract: event names, payload types, timings
 └── apps/
-    ├── api           # NestJS — lobby gateway + server-authoritative game clock
-    └── web           # Next.js — landing, lobby, cinematic duel stage
+    ├── api           # NestJS - lobby gateway + server-authoritative game clock
+    └── web           # Next.js - landing, lobby, cinematic duel stage
 ```
 
 ## Getting started
@@ -60,12 +60,12 @@ To use real sound, drop files in `apps/web/public/audio/`:
 
 ## How a duel flows
 
-1. **Lobby** — both players `Ready`.
-2. **Zoom** (~3.5s) — Face Mesh finds the eyes, canvas pushes in, letterbox bars, tension music.
-3. **Dezoom + silence** (~2.5s) — pull back to full frame, total silence.
-4. **Draw** — after a *server-decided* random 3–8s, a white flash + gunshot. Detection arms.
-5. **Result** — first valid draw wins; reaction time stamped **server-side** for fairness.
+1. **Lobby** - both players `Ready`.
+2. **Zoom** (~3.5s) - Face Mesh finds the eyes, canvas pushes in, letterbox bars, tension music.
+3. **Dezoom + silence** (~2.5s) - pull back to full frame, total silence.
+4. **Draw** - after a *server-decided* random 3–8s, a white flash + gunshot. Detection arms.
+5. **Result** - first valid draw wins; reaction time stamped **server-side** for fairness.
    Drawing before the signal = false start, opponent wins.
 
-The **server owns the clock** — clients never decide when the signal fires, only report
+The **server owns the clock** - clients never decide when the signal fires, only report
 when they drew. Reaction time = `serverReceive(draw) − serverEmit(signal)`.

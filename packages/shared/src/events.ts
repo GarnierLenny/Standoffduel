@@ -66,7 +66,7 @@ export interface GameStartPayload {
 }
 
 export interface GameDrawPayload {
-  /** Server timestamp when the signal fired — the fairness reference point. */
+  /** Server timestamp when the signal fired - the fairness reference point. */
   at: number;
   windowMs: number;
 }

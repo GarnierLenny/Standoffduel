@@ -6,7 +6,7 @@
 /** Lifecycle of a single lobby / duel. */
 export type LobbyStatus =
   | 'waiting' // fewer than 2 players, or not everyone ready
-  | 'ready' // 2 players, both ready — about to start
+  | 'ready' // 2 players, both ready - about to start
   | 'countdown' // cinematic sequence playing (zoom -> dezoom -> wait)
   | 'draw' // the signal has fired, detection is armed
   | 'finished'; // a winner (or tie) has been decided
@@ -19,7 +19,7 @@ export interface PublicPlayer {
   connected: boolean;
 }
 
-/** Why a duel ended — drives the copy on the result screen. */
+/** Why a duel ended - drives the copy on the result screen. */
 export type DuelEndReason =
   | 'draw' // a clean draw was detected
   | 'false_start' // someone drew before the signal
@@ -47,15 +47,15 @@ export interface ReactionOutcome {
  * The random portion of the wait is decided server-side per duel.
  */
 export const DUEL_TIMINGS = {
-  /** Phase 1 — push in on the eyes. */
+  /** Phase 1 - push in on the eyes. */
   ZOOM_MS: 3500,
-  /** Phase 2 — pull back to full frame, silence. */
+  /** Phase 2 - pull back to full frame, silence. */
   DEZOOM_MS: 2500,
-  /** Phase 3 — random wait before the signal, lower bound (after dezoom). */
+  /** Phase 3 - random wait before the signal, lower bound (after dezoom). */
   DRAW_MIN_MS: 3000,
-  /** Phase 3 — random wait before the signal, upper bound. */
+  /** Phase 3 - random wait before the signal, upper bound. */
   DRAW_MAX_MS: 8000,
-  /** Phase 4 — how long detection stays armed before a timeout. */
+  /** Phase 4 - how long detection stays armed before a timeout. */
   DRAW_WINDOW_MS: 6000,
 } as const;
 

@@ -1,5 +1,5 @@
 /**
- * Human-friendly lobby codes like `OUTLAW-42` — easy to read aloud and share.
+ * Human-friendly lobby codes like `OUTLAW-42` - easy to read aloud and share.
  */
 const WORDS = [
   'OUTLAW',
