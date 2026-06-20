@@ -16,12 +16,16 @@ export interface HandMarker {
   x: number;
   y: number;
   holstered: boolean;
+  /** Ready charge for this hand's ring, 0..1 (only the hip hand fills). */
+  charge: number;
 }
 
 interface Options {
   video: HTMLVideoElement | null;
   /** Run detection at all (lobby + the moments around the draw). */
   active: boolean;
+  /** Lobby/ready phase: a steady hand on the hip charges "ready". */
+  charging: boolean;
   /** Draw phase: fire `onDraw` the instant the hip hand leaves the holster. */
   armed: boolean;
   onHolsterChange?: (s: HolsterState) => void;
@@ -35,7 +39,8 @@ type LM = { x: number; y: number };
 // webcam only sees your head and shoulders: the hand shows at a bottom corner).
 const HOLSTER_Y = 0.58; // wrist low in the frame (down toward the hip)
 const SIDE_X = 0.35; // ...and clearly out to a side, not resting centrally
-const HOLD_MS = 600; // hold the pose this long to ready (kills accidental triggers)
+const CHARGE_MS = 1100; // steady time on the hip to fully charge "ready"
+const STEADY_THRESH = 0.018; // max smoothed wrist movement to still count as steady
 const DRAW_MOVE = 0.06; // armed: wrist moving this far (of frame) in ~260ms = draw
 
 function wristHolstered(hand: LM[]): boolean {
@@ -65,15 +70,18 @@ function isPistol(hand: LM[]): boolean {
 export function useHolster({
   video,
   active,
+  charging,
   armed,
   onHolsterChange,
   onDraw,
 }: Options): MutableRefObject<HandMarker[]> {
   const markerRef = useRef<HandMarker[]>([]);
   const armedRef = useRef(armed);
+  const chargingRef = useRef(charging);
   const onDrawRef = useRef(onDraw);
   const onChangeRef = useRef(onHolsterChange);
   armedRef.current = armed;
+  chargingRef.current = charging;
   onDrawRef.current = onDraw;
   onChangeRef.current = onHolsterChange;
 
@@ -85,9 +93,11 @@ export function useHolster({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let landmarker: any = null;
 
-    let holsterStart = 0;
-    let lastInZoneT = 0;
-    let holsteredStable = false;
+    let charge = 0;
+    let moveAvg = 0;
+    let prevHolster: { x: number; y: number } | null = null;
+    let lastFrameT = 0;
+    let wasReady = false;
     let armedPrev = false;
     let drawn = false;
     const moveHist: { t: number; d: number }[] = [];
@@ -99,6 +109,7 @@ export function useHolster({
         return; // model failed; manual Ready + tap/SPACE still work
       }
       if (stopped) return;
+      onChangeRef.current?.({ holstered: false, pistol: false });
 
       const loop = () => {
         if (stopped) return;
@@ -115,11 +126,8 @@ export function useHolster({
         const hands: LM[][] = result?.landmarks ?? [];
         const now = performance.now();
 
-        // One circle per hand (up to 2): each palm centre + whether it's on the
-        // hip. Smooth toward the nearest previous marker so the two circles
-        // don't swap or jitter between hands.
+        // Per-hand info: palm centre, whether it's on the hip, pistol shape.
         let pistol = false;
-        let anyHolstered = false;
         const current = hands.map((h) => {
           const ids = [0, 5, 9, 13, 17];
           let cx = 0;
@@ -128,12 +136,45 @@ export function useHolster({
             cx += h[i].x;
             cy += h[i].y;
           }
-          const holstered = wristHolstered(h);
-          if (holstered) anyHolstered = true;
           if (isPistol(h)) pistol = true;
-          return { x: cx / ids.length, y: cy / ids.length, holstered };
+          return {
+            x: cx / ids.length,
+            y: cy / ids.length,
+            holstered: wristHolstered(h),
+          };
         });
 
+        // ----- Hold-to-ready: a hand held STEADY on the hip fills the charge.
+        // Movement drains it, so you only ready when you mean to. -----
+        const rawHolster = current.find((c) => c.holstered) ?? null;
+        const dt = Math.min(now - lastFrameT, 100);
+        lastFrameT = now;
+        if (!chargingRef.current) {
+          charge = 0;
+          prevHolster = null;
+          moveAvg = 0;
+        } else if (rawHolster) {
+          const move = prevHolster
+            ? Math.hypot(rawHolster.x - prevHolster.x, rawHolster.y - prevHolster.y)
+            : 0;
+          moveAvg = moveAvg * 0.6 + move * 0.4;
+          prevHolster = { x: rawHolster.x, y: rawHolster.y };
+          if (moveAvg < STEADY_THRESH) charge += dt / CHARGE_MS;
+          else charge -= (dt / CHARGE_MS) * 1.5; // too shaky: it drains
+        } else {
+          prevHolster = null;
+          moveAvg = 0;
+          charge -= (dt / CHARGE_MS) * 2; // no hand on hip: drains fast
+        }
+        charge = Math.max(0, Math.min(1, charge));
+
+        const ready = charge >= 1;
+        if (ready !== wasReady) {
+          wasReady = ready;
+          onChangeRef.current?.({ holstered: ready, pistol });
+        }
+
+        // ----- Smoothed markers (one per hand) for the circles + charge ring -----
         const prev = markerRef.current;
         const used = new Array(prev.length).fill(false);
         let frameMaxDisp = 0;
@@ -148,30 +189,21 @@ export function useHolster({
               best = j;
             }
           }
+          let x = c.x;
+          let y = c.y;
           if (best >= 0 && bestD < 0.18) {
             used[best] = true;
             frameMaxDisp = Math.max(frameMaxDisp, bestD);
-            return {
-              x: prev[best].x * 0.5 + c.x * 0.5,
-              y: prev[best].y * 0.5 + c.y * 0.5,
-              holstered: c.holstered,
-            };
+            x = prev[best].x * 0.5 + c.x * 0.5;
+            y = prev[best].y * 0.5 + c.y * 0.5;
           }
-          return c;
+          return {
+            x,
+            y,
+            holstered: c.holstered,
+            charge: chargingRef.current && c.holstered ? charge : 0,
+          };
         });
-
-        // Must HOLD a hand on the hip for HOLD_MS to ready.
-        if (anyHolstered) {
-          lastInZoneT = now;
-          if (holsterStart === 0) holsterStart = now;
-        } else if (now - lastInZoneT > 150) {
-          holsterStart = 0;
-        }
-        const nextStable = holsterStart !== 0 && now - holsterStart > HOLD_MS;
-        if (nextStable !== holsteredStable) {
-          holsteredStable = nextStable;
-          onChangeRef.current?.({ holstered: holsteredStable, pistol });
-        }
 
         // Draw: once armed, the FIRST hand to move quickly fires it. Track the
         // fastest hand's travel over a short window (works with one or two hands).

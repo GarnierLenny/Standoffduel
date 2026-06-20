@@ -145,6 +145,7 @@ export function LobbyRoom({
   const markerRef = useHolster({
     video: localEl,
     active: holsterActive,
+    charging: duel.phase === 'idle',
     armed: duel.phase === 'draw',
     onHolsterChange: setHolster,
     onDraw,
@@ -476,6 +477,24 @@ function HandOverlay({
         ctx.lineWidth = Math.max(3, W * 0.008);
         ctx.strokeStyle = color;
         ctx.stroke();
+
+        // hold-steady-to-ready charge ring
+        if (marker.charge > 0) {
+          const start = -Math.PI / 2;
+          ctx.beginPath();
+          ctx.arc(
+            px,
+            py,
+            radius + Math.max(4, W * 0.013),
+            start,
+            start + marker.charge * Math.PI * 2,
+          );
+          ctx.strokeStyle = marker.charge >= 1 ? '#22c55e' : '#facc15';
+          ctx.lineWidth = Math.max(3, W * 0.015);
+          ctx.lineCap = 'round';
+          ctx.stroke();
+          ctx.lineCap = 'butt';
+        }
       }
     };
     raf = requestAnimationFrame(render);
@@ -594,11 +613,11 @@ function LobbyOverlay({
               )}
             >
               {holstered
-                ? `Hand on hip - holstered${pistol ? ' 🔫' : ''}`
-                : '🤠 Put a hand on your hip to ready up'}
+                ? `Locked in - ready${pistol ? ' 🔫' : ''}`
+                : '🤠 Hold a hand steady on your hip'}
             </p>
             <p className="mt-1 text-xs text-sand/50">
-              Drop your gun-hand low to your side, in view of the camera.
+              Keep it still - the ring fills as you hold.
             </p>
             <button
               onClick={onManualReady}
