@@ -17,6 +17,7 @@ export function Landing() {
   const [name, setName] = useState('');
   const [joinId, setJoinId] = useState('');
   const [joinErr, setJoinErr] = useState<string | null>(null);
+  const [bo3, setBo3] = useState(false);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -36,12 +37,12 @@ export function Landing() {
     localStorage.setItem('sd_name', n.trim().slice(0, 24));
   };
 
-  const go = (id: string) => {
+  const go = (id: string, bo = false) => {
     if (name.trim()) localStorage.setItem('sd_name', name.trim().slice(0, 24));
-    router.push(`/lobby/${id}`);
+    router.push(bo ? `/lobby/${id}?bo=3` : `/lobby/${id}`);
   };
 
-  const create = () => go(generateLobbyId());
+  const create = () => go(generateLobbyId(), bo3);
 
   const join = () => {
     const id = normalizeLobbyId(joinId);
@@ -103,6 +104,19 @@ export function Landing() {
             </div>
           </div>
           {joinErr && <p className="text-sm text-rust">{joinErr}</p>}
+
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-sand/70">
+            <input
+              type="checkbox"
+              checked={bo3}
+              onChange={(e) => setBo3(e.target.checked)}
+              className="h-4 w-4 accent-ember"
+            />
+            Best of 3
+            <span className="text-sand/40">
+              — first to two draws takes the match
+            </span>
+          </label>
         </div>
       </section>
 

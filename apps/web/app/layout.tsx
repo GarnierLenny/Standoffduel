@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from 'next';
 import { Analytics } from '@vercel/analytics/next';
+import { siteUrl } from '@/lib/site-url';
 import './globals.css';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl()),
   title: 'StandoffDuel - the webcam western duel',
   description:
     'Two players, two webcams, one draw. Stare your opponent down and be the fastest gun on the internet.',
@@ -10,6 +12,13 @@ export const metadata: Metadata = {
     title: 'StandoffDuel',
     description: 'The fastest draw on the internet wins. Duel a friend over webcam.',
     type: 'website',
+    siteName: 'StandoffDuel',
+    // og:image is supplied by the app/opengraph-image route.
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'StandoffDuel',
+    description: 'The fastest draw on the internet wins. Duel a friend over webcam.',
   },
 };
 

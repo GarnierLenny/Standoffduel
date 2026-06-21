@@ -1,41 +1,59 @@
-'use client';
-
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import dynamic from 'next/dynamic';
+import type { Metadata } from 'next';
 import { normalizeLobbyId } from '@standoffduel/shared';
+import { LobbyClient } from './LobbyClient';
 
-// The duel room is browser-only (webcam, WebRTC, MediaPipe, socket.io). Loading
-// it without SSR keeps those Node-hostile modules out of the server bundle.
-const LobbyRoom = dynamic(
-  () => import('@/components/LobbyRoom').then((m) => m.LobbyRoom),
-  {
-    ssr: false,
-    loading: () => <SaddlingUp />,
-  },
-);
+type Params = Promise<{ id: string | string[] }>;
+type Search = Promise<{ [key: string]: string | string[] | undefined }>;
 
-function SaddlingUp() {
-  return (
-    <main className="flex min-h-screen items-center justify-center text-sand/60">
-      Saddling up…
-    </main>
-  );
+function pick(v: string | string[] | undefined): string {
+  return Array.isArray(v) ? v[0] ?? '' : v ?? '';
 }
 
-export default function LobbyPage() {
-  const params = useParams<{ id: string | string[] }>();
-  const raw = Array.isArray(params.id) ? params.id[0] : params.id;
-  const lobbyId = normalizeLobbyId(raw ?? '');
+// Server-rendered metadata so a shared lobby link gets a personalized preview
+// ("<name> challenges you to a duel"). The interactive room itself is the
+// client-only <LobbyClient>.
+export async function generateMetadata({
+  params,
+  searchParams,
+}: {
+  params: Params;
+  searchParams: Search;
+}): Promise<Metadata> {
+  const [{ id }, sp] = await Promise.all([params, searchParams]);
+  const code = normalizeLobbyId(pick(id));
+  const by = pick(sp.by).slice(0, 24);
 
-  // Read the player's name on the client to avoid a hydration mismatch, and to
-  // make sure the socket joins with the right name on the first try.
-  const [name, setName] = useState<string | null>(null);
-  useEffect(() => {
-    setName(localStorage.getItem('sd_name') || 'Stranger');
-  }, []);
+  const img = `/api/og/invite?code=${encodeURIComponent(code)}${
+    by ? `&by=${encodeURIComponent(by)}` : ''
+  }`;
+  const title = by
+    ? `${by} challenges you to a duel`
+    : "You've been challenged to a duel";
+  const description =
+    'Two webcams. One draw. Lock eyes, wait for the signal, be the fastest gun on the internet.';
 
-  if (!name) return <SaddlingUp />;
+  return {
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      type: 'website',
+      images: [{ url: img, width: 1200, height: 630 }],
+    },
+    twitter: { card: 'summary_large_image', title, description, images: [img] },
+  };
+}
 
-  return <LobbyRoom lobbyId={lobbyId} name={name} />;
+export default async function LobbyPage({
+  params,
+  searchParams,
+}: {
+  params: Params;
+  searchParams: Search;
+}) {
+  const [{ id }, sp] = await Promise.all([params, searchParams]);
+  const lobbyId = normalizeLobbyId(pick(id));
+  const bestOf = pick(sp.bo) === '3' ? 3 : 1;
+  return <LobbyClient lobbyId={lobbyId} bestOf={bestOf} />;
 }

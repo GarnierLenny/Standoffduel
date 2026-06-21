@@ -21,6 +21,7 @@ export class AudioEngine {
   private howls: Partial<Record<Cue, Howl>> = {};
   private fileOk: Partial<Record<Cue, boolean>> = {};
   private droneStop: (() => void) | null = null;
+  private heartTimer: number | null = null;
   private unlocked = false;
 
   unlock(): void {
@@ -80,6 +81,7 @@ export class AudioEngine {
 
   dispose(): void {
     this.stopDrone();
+    this.stopHeartbeat();
     Object.values(this.howls).forEach((h) => h?.unload());
     this.howls = {};
     try {
@@ -231,6 +233,49 @@ export class AudioEngine {
       o.start(t + 0.15);
       o.stop(t + 2.3);
     });
+  }
+
+  /**
+   * A low, quickening heart-thud for the silent hold before the draw. The
+   * interval tightens with each beat so the dread ratchets up - tension in the
+   * quiet rather than breaking it with music.
+   */
+  heartbeat(): void {
+    const ctx = this.ctx;
+    if (!ctx || this.heartTimer !== null) return;
+    let interval = 900;
+    const beat = (): void => {
+      this.heartThump(0);
+      this.heartThump(0.17); // lub-dub
+      interval = Math.max(360, interval * 0.9);
+      this.heartTimer = window.setTimeout(beat, interval);
+    };
+    beat();
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartTimer !== null) {
+      window.clearTimeout(this.heartTimer);
+      this.heartTimer = null;
+    }
+  }
+
+  private heartThump(delay: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime + delay;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(72, t);
+    o.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.2, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start(t);
+    o.stop(t + 0.2);
   }
 
   /** A low body-fall thud for the showdown beat. */

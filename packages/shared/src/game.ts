@@ -34,6 +34,29 @@ export interface DuelResult {
   reactionMs: number | null;
   reason: DuelEndReason;
   reactions: Record<string, ReactionOutcome>;
+  /** Set once persisted server-side; basis for the /r/<id> share permalink. */
+  resultId?: string;
+  /** Match length (1 = single duel, 3 = best-of-three). Defaults to 1. */
+  bestOf?: number;
+  /** Round wins so far this match, keyed by player id. */
+  scores?: Record<string, number>;
+  /** False when this was a round in an ongoing match (play the next one). */
+  matchOver?: boolean;
+}
+
+/**
+ * A persisted, shareable duel outcome - no socket ids, no photos. Stored
+ * server-side and rendered on the /r/<id> permalink + its OG card.
+ */
+export interface DuelResultRecord {
+  id: string;
+  winnerName: string | null;
+  loserName: string | null;
+  reactionMs: number | null;
+  reason: DuelEndReason;
+  isTie: boolean;
+  /** Epoch ms the duel resolved. */
+  createdAt: number;
 }
 
 /** Per-player reaction detail. `ms` is null when the player never drew. */

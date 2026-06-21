@@ -17,6 +17,7 @@ interface ResultScreenProps {
   onRematch: () => void;
   winnerPhoto: string | null;
   loserPhoto: string | null;
+  clip?: Blob | null;
 }
 
 const PARCHMENT = 'radial-gradient(120% 120% at 50% 0%, #f2e6c6, #d8c194 60%, #bea66f)';
@@ -48,8 +49,10 @@ export function ResultScreen({
   onRematch,
   winnerPhoto,
   loserPhoto,
+  clip,
 }: ResultScreenProps) {
   const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
   const youWon = !!selfId && result.winnerId === selfId;
   const isTie = result.winnerId === null;
   const winnerName = result.winnerName ?? 'Nobody';
@@ -59,6 +62,46 @@ export function ResultScreen({
   const loserReaction = result.loserId
     ? result.reactions[result.loserId]
     : undefined;
+
+  // Best-of-N match context.
+  const bestOf = result.bestOf ?? 1;
+  const matchOver = result.matchOver ?? true;
+  const oppId = players.find((p) => p.id !== selfId)?.id;
+  const myWins = selfId ? result.scores?.[selfId] ?? 0 : 0;
+  const oppWins = oppId ? result.scores?.[oppId] ?? 0 : 0;
+
+  const banner = !matchOver
+    ? isTie
+      ? 'A standoff — replay the round'
+      : youWon
+        ? 'Round to you'
+        : 'Round to your rival'
+    : isTie
+      ? 'A standoff'
+      : youWon
+        ? bestOf > 1
+          ? 'You take the match'
+          : 'You are the fastest gun'
+        : bestOf > 1
+          ? 'The match is lost'
+          : "You've been out-drawn";
+
+  // The shareable permalink (own OG card) when the result was persisted,
+  // falling back to the homepage. Carried by every share path below.
+  const permalink = () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return result.resultId ? `${origin}/r/${result.resultId}` : origin;
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(permalink());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
 
   const share = async () => {
     setSharing(true);
@@ -75,11 +118,36 @@ export function ResultScreen({
       await shareOrDownload(
         blob,
         `standoffduel-${lobbyId}.png`,
-        `${winnerName} is the fastest gun in our StandoffDuel - think you're faster?`,
+        `${winnerName} is the fastest gun in our StandoffDuel - think you're faster? ${permalink()}`,
       );
     } finally {
       setSharing(false);
     }
+  };
+
+  // The image share is the native/mobile path; the tweet intent is the one-tap
+  // desktop path. The link it carries now resolves to a real OG card, so the
+  // loop closes instead of dead-ending in a Downloads folder.
+  const shareClip = async () => {
+    if (!clip) return;
+    const ext = clip.type.includes('mp4') ? 'mp4' : 'webm';
+    await shareOrDownload(
+      clip,
+      `standoffduel-${lobbyId}.${ext}`,
+      `${winnerName} won our StandoffDuel 🤠🔫 Think you're faster? ${permalink()}`,
+    );
+  };
+
+  const tweet = () => {
+    const text = youWon
+      ? `I out-drew ${loserName} in ${result.reactionMs ?? '—'}ms on StandoffDuel 🤠🔫 Think you're faster?`
+      : isTie
+        ? `Nobody flinched - a dead-even standoff on StandoffDuel 🤠🔫 Come settle it.`
+        : `${winnerName} just out-drew me on StandoffDuel 🤠🔫 Avenge me?`;
+    const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
+      text,
+    )}&url=${encodeURIComponent(permalink())}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -91,12 +159,17 @@ export function ResultScreen({
       <TableDressing />
       <div className="relative z-10 mx-auto flex min-h-full max-w-5xl flex-col items-center justify-center gap-8 px-4 py-12">
         <p className="font-impact text-center text-sm uppercase tracking-[0.4em] text-ember drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
-          {isTie
-            ? 'A standoff'
-            : youWon
-              ? 'You are the fastest gun'
-              : "You've been out-drawn"}
+          {banner}
         </p>
+
+        {bestOf > 1 && (
+          <p className="font-impact text-center text-3xl uppercase tracking-[0.3em] text-gold drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
+            {myWins} <span className="text-sand/40">–</span> {oppWins}
+            <span className="ml-3 align-middle text-xs text-sand/50">
+              best of {bestOf}
+            </span>
+          </p>
+        )}
 
         {isTie ? (
           <Newspaper
@@ -123,11 +196,25 @@ export function ResultScreen({
 
         <div className="flex flex-col items-center gap-3 sm:flex-row">
           <Button size="lg" onClick={onRematch}>
-            Rematch
+            {matchOver ? 'Rematch' : 'Next round'}
+          </Button>
+          {clip && (
+            <Button variant="ghost" size="lg" onClick={shareClip}>
+              Share clip
+            </Button>
+          )}
+          <Button variant="ghost" size="lg" onClick={tweet}>
+            Post on X
           </Button>
           <Button variant="ghost" size="lg" onClick={share} disabled={sharing}>
-            {sharing ? 'Saving…' : 'Share result'}
+            {sharing ? 'Saving…' : 'Share card'}
           </Button>
+          <button
+            onClick={copyLink}
+            className="text-xs uppercase tracking-widest text-sand/60 hover:text-sand"
+          >
+            {copied ? 'Link copied!' : 'Copy link'}
+          </button>
           <Link
             href="/"
             className="text-xs uppercase tracking-widest text-sand/60 hover:text-sand"

@@ -25,6 +25,8 @@ export const SocketEvents = {
 export interface LobbyJoinPayload {
   lobbyId: string;
   name: string;
+  /** Desired match length; only honored when this join *creates* the lobby. */
+  bestOf?: number;
 }
 
 export interface WebrtcSignalPayload {
@@ -46,6 +48,10 @@ export interface LobbyStatePayload {
   /** The recipient's own socket id, so the client can tell "me" from "them". */
   selfId: string;
   full: boolean;
+  /** Match length for this lobby (1 or 3). */
+  bestOf: number;
+  /** Round wins so far this match, keyed by player id. */
+  scores: Record<string, number>;
 }
 
 export interface LobbyErrorPayload {

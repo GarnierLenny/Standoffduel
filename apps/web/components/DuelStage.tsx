@@ -18,6 +18,10 @@ interface DuelStageProps {
   oppName: string;
   /** Which half topples during the showdown beat ('left' = local player). */
   loserSide: 'left' | 'right' | null;
+  /** Hands the composited canvas to the parent so the duel can be recorded. */
+  onReady?: (canvas: HTMLCanvasElement) => void;
+  /** Stack the duelists top/bottom instead of side-by-side (portrait phones). */
+  vertical?: boolean;
 }
 
 const ZOOM_MAX = 2.7;
@@ -36,6 +40,12 @@ const easeIn = (t: number) => t * t * t;
 // Once the eyes are revealed, frame the full bodies centered (matches the raw
 // video + the hand-circle overlay) instead of staying pinned on the eyes.
 const CENTER_FOCUS: EyeFocus = { x: 0.5, y: 0.5, scale: 0.1, found: true };
+const lerpFocus = (a: EyeFocus, b: EyeFocus, t: number): EyeFocus => ({
+  x: a.x + (b.x - a.x) * t,
+  y: a.y + (b.y - a.y) * t,
+  scale: a.scale + (b.scale - a.scale) * t,
+  found: true,
+});
 // Showdown beat: how long everything freezes before the loser's frame topples.
 const SHOWDOWN_FREEZE_MS = 1500;
 const SHOWDOWN_FALL_MS = 1100;
@@ -60,6 +70,9 @@ export function DuelStage(props: DuelStageProps) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Expose the live canvas so the parent can capture a shareable clip.
+    propsRef.current.onReady?.(canvas);
 
     let raf = 0;
     let stopped = false;
@@ -101,87 +114,145 @@ export function DuelStage(props: DuelStageProps) {
 
       let zoom = 1;
       let bar = 0; // 0 = no letterbox (full frame for the duel), 1 = full bars
+      let dezoomE = 0;
       if (phase === 'zoom') {
         const e = easeInOut(clamp(elapsed / zoomMs, 0, 1));
         zoom = 1 + (ZOOM_MAX - 1) * e;
         bar = e; // push in + close the bars on the eyes
       } else if (phase === 'dezoom') {
         // Snap back fast (capped) to clear the frame for the duel.
-        const e = easeOut(clamp(elapsed / Math.min(dezoomMs, 1100), 0, 1));
-        zoom = ZOOM_MAX - (ZOOM_MAX - 1) * e;
-        bar = 1 - e; // open the letterbox back up
+        dezoomE = easeOut(clamp(elapsed / Math.min(dezoomMs, 1100), 0, 1));
+        zoom = ZOOM_MAX - (ZOOM_MAX - 1) * dezoomE;
+        bar = 1 - dezoomE; // open the letterbox back up
       }
 
-      // Content strip inside the letterbox - a tight slot over the eyes at full bars.
-      const contentH = H * lerp(1, EYE_STRIP_FRAC, bar);
-      const contentY = (H - contentH) / 2;
-      const halfW = W / 2;
+      // ----- Orientation-aware framing -----
+      // Landscape: panels side by side, letterbox bars top + bottom.
+      // Portrait (phones): panels stacked top/bottom, letterbox bars left + right.
+      const vertical = propsRef.current.vertical ?? false;
+      const strip = lerp(1, EYE_STRIP_FRAC, bar);
 
-      const eyes = phase === 'zoom' || phase === 'dezoom';
-      const fLocal = eyes ? focusLocal.current : CENTER_FOCUS;
-      const fRemote = eyes ? focusRemote.current : CENTER_FOCUS;
-      drawHalf(ctx, localVideo, 0, contentY, halfW, contentH, zoom, fLocal, true);
-      if (remoteReady && remoteVideo) {
-        drawHalf(ctx, remoteVideo, halfW, contentY, halfW, contentH, zoom, fRemote, false);
+      let contentX: number;
+      let contentY: number;
+      let contentW: number;
+      let contentH: number;
+      let lx: number; // local panel origin
+      let ly: number;
+      let rx: number; // remote panel origin
+      let ry: number;
+      let pw: number; // panel size
+      let ph: number;
+      if (vertical) {
+        contentW = W * strip;
+        contentX = (W - contentW) / 2;
+        contentH = H;
+        contentY = 0;
+        pw = contentW;
+        ph = H / 2;
+        lx = contentX;
+        ly = 0; // local = top
+        rx = contentX;
+        ry = H / 2; // remote = bottom
       } else {
-        drawWaiting(ctx, halfW, contentY, halfW, contentH, H);
+        contentH = H * strip;
+        contentY = (H - contentH) / 2;
+        contentW = W;
+        contentX = 0;
+        pw = W / 2;
+        ph = contentH;
+        lx = 0; // local = left
+        ly = contentY;
+        rx = W / 2; // remote = right
+        ry = contentY;
       }
 
-      // Divider.
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(halfW - 1, contentY, 2, contentH);
+      // Eyes during the push-in; during the pull-back, glide the focus from the
+      // eyes to centre so it doesn't snap sideways when the duel framing starts.
+      let fLocal: EyeFocus;
+      let fRemote: EyeFocus;
+      if (phase === 'zoom') {
+        fLocal = focusLocal.current;
+        fRemote = focusRemote.current;
+      } else if (phase === 'dezoom') {
+        fLocal = lerpFocus(focusLocal.current, CENTER_FOCUS, dezoomE);
+        fRemote = lerpFocus(focusRemote.current, CENTER_FOCUS, dezoomE);
+      } else {
+        fLocal = CENTER_FOCUS;
+        fRemote = CENTER_FOCUS;
+      }
+      drawHalf(ctx, localVideo, lx, ly, pw, ph, zoom, fLocal, true);
+      if (remoteReady && remoteVideo) {
+        drawHalf(ctx, remoteVideo, rx, ry, pw, ph, zoom, fRemote, false);
+      } else {
+        drawWaiting(ctx, rx, ry, pw, ph, H);
+      }
 
-      // Showdown: the loser's frame tips over and falls, bleeding red.
+      // Divider between the duelists.
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      if (vertical) ctx.fillRect(contentX, H / 2 - 1, contentW, 2);
+      else ctx.fillRect(W / 2 - 1, contentY, 2, contentH);
+
+      // Showdown: the loser's frame falls away, bleeding red.
       if (phase === 'showdown' && loserSide) {
-        const lx = loserSide === 'left' ? 0 : halfW;
+        const isLeftLoser = loserSide === 'left';
+        const px = isLeftLoser ? lx : rx;
+        const py = isLeftLoser ? ly : ry;
         const fall = easeIn(
           clamp((elapsed - SHOWDOWN_FREEZE_MS) / SHOWDOWN_FALL_MS, 0, 1),
         );
-        // Black void behind the toppling panel.
+        const loserVideo = isLeftLoser ? localVideo : remoteVideo;
+        // Black void behind the departing panel.
         ctx.fillStyle = '#000';
-        ctx.fillRect(lx, contentY, halfW, contentH);
-        // Redraw the loser's half, rotating off its bottom edge + dropping.
-        const pivotX = lx + halfW / 2;
-        const pivotY = contentY + contentH;
+        ctx.fillRect(px, py, pw, ph);
         ctx.save();
-        ctx.translate(pivotX, pivotY);
-        ctx.rotate((loserSide === 'left' ? -1 : 1) * fall * 1.3);
-        ctx.translate(-pivotX, -pivotY);
-        ctx.translate(0, fall * contentH * 0.25);
-        ctx.globalAlpha = 1 - fall * 0.5;
-        const loserVideo = loserSide === 'left' ? localVideo : remoteVideo;
-        drawHalf(
-          ctx,
-          loserVideo,
-          lx,
-          contentY,
-          halfW,
-          contentH,
-          1,
-          CENTER_FOCUS,
-          loserSide === 'left',
-        );
+        if (vertical) {
+          // Slide the loser's panel out toward its own edge, clipped to its cell.
+          ctx.beginPath();
+          ctx.rect(px, py, pw, ph);
+          ctx.clip();
+          ctx.translate(0, (isLeftLoser ? -1 : 1) * fall * ph * 0.6);
+          ctx.globalAlpha = 1 - fall * 0.7;
+        } else {
+          // Tip off the bottom edge + drop.
+          const pivotX = px + pw / 2;
+          const pivotY = py + ph;
+          ctx.translate(pivotX, pivotY);
+          ctx.rotate((isLeftLoser ? -1 : 1) * fall * 1.3);
+          ctx.translate(-pivotX, -pivotY);
+          ctx.translate(0, fall * ph * 0.25);
+          ctx.globalAlpha = 1 - fall * 0.5;
+        }
+        drawHalf(ctx, loserVideo, px, py, pw, ph, 1, CENTER_FOCUS, isLeftLoser);
         ctx.restore();
         // Blood wash creeping over the loser.
         ctx.fillStyle = `rgba(124,29,18,${0.12 + fall * 0.45})`;
-        ctx.fillRect(lx, contentY, halfW, contentH);
+        ctx.fillRect(px, py, pw, ph);
       }
 
-      vignette(ctx, 0, contentY, W, contentH);
+      vignette(ctx, contentX, contentY, contentW, contentH);
 
-      // Gunsmoke drifting up from the winner's muzzle (between the duelists).
+      // Gunsmoke drifting from the winner's muzzle (between the duelists).
       if (phase === 'showdown') {
         const st = clamp(elapsed / 1600, 0, 1);
-        const size = halfW * 0.1;
-        const yMuzzle = contentY + contentH * 0.58;
-        if (loserSide !== 'left') drawSmoke(ctx, halfW * 0.8, yMuzzle, st, size);
-        if (loserSide !== 'right') drawSmoke(ctx, halfW * 1.2, yMuzzle, st, size);
+        if (vertical) {
+          drawSmoke(ctx, contentX + contentW * 0.5, H / 2, st, contentW * 0.1);
+        } else {
+          const size = pw * 0.1;
+          const yMuzzle = contentY + contentH * 0.58;
+          if (loserSide !== 'left') drawSmoke(ctx, pw * 0.8, yMuzzle, st, size);
+          if (loserSide !== 'right') drawSmoke(ctx, pw * 1.2, yMuzzle, st, size);
+        }
       }
 
       // Crisp letterbox bars.
       ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, contentY);
-      ctx.fillRect(0, contentY + contentH, W, H - (contentY + contentH));
+      if (vertical) {
+        ctx.fillRect(0, 0, contentX, H);
+        ctx.fillRect(contentX + contentW, 0, W - (contentX + contentW), H);
+      } else {
+        ctx.fillRect(0, 0, W, contentY);
+        ctx.fillRect(0, contentY + contentH, W, H - (contentY + contentH));
+      }
 
       // Name plates (fade out as we push in).
       const plateAlpha =
@@ -192,8 +263,8 @@ export function DuelStage(props: DuelStageProps) {
             : phase === 'wait'
               ? 1
               : 0;
-      drawNamePlate(ctx, selfName, 0, contentY, halfW, contentH, H, plateAlpha, false);
-      drawNamePlate(ctx, oppName, halfW, contentY, halfW, contentH, H, plateAlpha, true);
+      drawNamePlate(ctx, selfName, lx, ly, pw, ph, H, plateAlpha, false);
+      drawNamePlate(ctx, oppName, rx, ry, pw, ph, H, plateAlpha, !vertical);
 
       if (phase === 'draw') {
         const flash = clamp(1 - elapsed / 420, 0, 1);

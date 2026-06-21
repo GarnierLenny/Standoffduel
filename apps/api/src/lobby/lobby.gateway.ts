@@ -63,7 +63,12 @@ export class LobbyGateway
     }
     const id = normalizeLobbyId(body.lobbyId);
     client.join(id);
-    const err = this.lobby.join(id, (body.name ?? '').trim(), client.id);
+    const err = this.lobby.join(
+      id,
+      (body.name ?? '').trim(),
+      client.id,
+      body.bestOf,
+    );
     if (err) {
       client.leave(id);
       client.emit(SocketEvents.LobbyError, err);

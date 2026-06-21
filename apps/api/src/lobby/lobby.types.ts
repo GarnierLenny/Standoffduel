@@ -22,4 +22,10 @@ export interface ServerLobby {
   drawSignalAt: number | null;
   /** Pending setTimeout handles (countdown, draw window) to clear on teardown. */
   timers: NodeJS.Timeout[];
+  /** Match length: 1 = single duel, 3 = best-of-three. */
+  bestOf: number;
+  /** Round wins this match, keyed by socketId. */
+  scores: Record<string, number>;
+  /** True when a round just ended but the match is still going. */
+  pendingNextRound: boolean;
 }

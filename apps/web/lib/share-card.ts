@@ -669,7 +669,7 @@ export async function shareOrDownload(
   filename: string,
   text: string,
 ): Promise<void> {
-  const file = new File([blob], filename, { type: 'image/png' });
+  const file = new File([blob], filename, { type: blob.type || 'image/png' });
   const nav = navigator as Navigator & {
     canShare?: (data: { files: File[] }) => boolean;
     share?: (data: { files?: File[]; text?: string }) => Promise<void>;

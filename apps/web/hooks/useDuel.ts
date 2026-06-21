@@ -40,6 +40,10 @@ export interface DuelState {
   start: GameStartPayload | null;
   draw: GameDrawPayload | null;
   result: DuelResult | null;
+  /** Match length for this lobby (1 or 3), confirmed by the server. */
+  bestOf: number;
+  /** Round wins so far this match, keyed by player id. */
+  scores: Record<string, number>;
   ready: () => void;
   rematch: () => void;
   reportDraw: () => void;
@@ -50,7 +54,11 @@ export interface DuelState {
  * lobby/duel UI needs, including the cinematic phase machine. The server stays
  * the source of truth - this only animates between the beats it dictates.
  */
-export function useDuel(lobbyId: string, name: string): DuelState {
+export function useDuel(
+  lobbyId: string,
+  name: string,
+  requestedBestOf = 1,
+): DuelState {
   const socketRef = useRef<DuelSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<LobbyStatus | 'connecting'>('connecting');
@@ -63,6 +71,8 @@ export function useDuel(lobbyId: string, name: string): DuelState {
   const [start, setStart] = useState<GameStartPayload | null>(null);
   const [draw, setDraw] = useState<GameDrawPayload | null>(null);
   const [result, setResult] = useState<DuelResult | null>(null);
+  const [bestOf, setBestOf] = useState(requestedBestOf);
+  const [scores, setScores] = useState<Record<string, number>>({});
 
   const timersRef = useRef<number[]>([]);
   const drawReportedRef = useRef(false);
@@ -78,7 +88,7 @@ export function useDuel(lobbyId: string, name: string): DuelState {
 
     socket.on('connect', () => {
       setConnected(true);
-      socket.emit(SocketEvents.LobbyJoin, { lobbyId, name });
+      socket.emit(SocketEvents.LobbyJoin, { lobbyId, name, bestOf: requestedBestOf });
     });
     socket.on('disconnect', () => setConnected(false));
 
@@ -87,6 +97,8 @@ export function useDuel(lobbyId: string, name: string): DuelState {
       setPlayers(s.players);
       setSelfId(s.selfId);
       setFull(s.full);
+      setBestOf(s.bestOf);
+      setScores(s.scores);
       // Between rounds, reset the cinematic so the lobby shows again.
       if (s.status === 'waiting' || s.status === 'ready') {
         clearTimers();
@@ -139,7 +151,7 @@ export function useDuel(lobbyId: string, name: string): DuelState {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [lobbyId, name, clearTimers]);
+  }, [lobbyId, name, requestedBestOf, clearTimers]);
 
   const ready = useCallback(() => {
     socketRef.current?.emit(SocketEvents.LobbyReady);
@@ -170,6 +182,8 @@ export function useDuel(lobbyId: string, name: string): DuelState {
     start,
     draw,
     result,
+    bestOf,
+    scores,
     ready,
     rematch,
     reportDraw,

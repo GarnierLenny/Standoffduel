@@ -10,6 +10,8 @@ import { useWebRTC } from '@/hooks/useWebRTC';
 import { useHolster, HolsterState, HandMarker } from '@/hooks/useHolster';
 import { useFaceFocus } from '@/hooks/useFaceFocus';
 import { useDuelAudio } from '@/hooks/useDuelAudio';
+import { useDuelClip } from '@/hooks/useDuelClip';
+import { useOrientation } from '@/hooks/useOrientation';
 import { loadPoseLandmarker, loadHandLandmarker } from '@/lib/mediapipe';
 import { DuelStage } from '@/components/DuelStage';
 import { ResultScreen } from '@/components/ResultScreen';
@@ -86,17 +88,33 @@ function grabPortrait(
 export function LobbyRoom({
   lobbyId,
   name,
+  bestOf,
 }: {
   lobbyId: string;
   name: string;
+  bestOf?: number;
 }) {
-  const duel = useDuel(lobbyId, name);
+  const duel = useDuel(lobbyId, name, bestOf);
   const { stream, error: camError } = useWebcam(true);
   const webrtc = useWebRTC(duel.socket, stream, duel.initiator);
   const audio = useDuelAudio();
+  const vertical = useOrientation() === 'portrait';
 
   const [localEl, setLocalEl] = useState<HTMLVideoElement | null>(null);
   const [remoteEl, setRemoteEl] = useState<HTMLVideoElement | null>(null);
+  const [stageCanvas, setStageCanvas] = useState<HTMLCanvasElement | null>(null);
+  const onStageReady = useCallback((c: HTMLCanvasElement) => setStageCanvas(c), []);
+  // Record the draw → showdown beat into a shareable clip (the TikTok asset).
+  const clip = useDuelClip(stageCanvas, duel.phase);
+
+  const [shake, setShake] = useState(false);
+  const triggerShake = useCallback((ms = 450) => {
+    setShake(false);
+    requestAnimationFrame(() => {
+      setShake(true);
+      window.setTimeout(() => setShake(false), ms);
+    });
+  }, []);
   const [holster, setHolster] = useState<HolsterState>({
     holstered: false,
     pistol: false,
@@ -183,6 +201,8 @@ export function LobbyRoom({
 
   const me = duel.players.find((p) => p.id === duel.selfId) ?? null;
   const opp = duel.players.find((p) => p.id !== duel.selfId) ?? null;
+  const myWins = duel.selfId ? duel.scores[duel.selfId] ?? 0 : 0;
+  const oppWins = opp ? duel.scores[opp.id] ?? 0 : 0;
 
   // Which half topples in the showdown beat (local is always the left half).
   const loserSide: 'left' | 'right' | null =
@@ -216,6 +236,8 @@ export function LobbyRoom({
   // Audio cues follow the phase.
   useEffect(() => {
     if (!audio) return;
+    // Any phase other than the silent hold kills the heartbeat.
+    audio.stopHeartbeat();
     switch (duel.phase) {
       case 'zoom':
         audio.startTension();
@@ -223,6 +245,10 @@ export function LobbyRoom({
       case 'dezoom':
       case 'idle':
         audio.stopTension();
+        break;
+      case 'wait':
+        // Pull-back silence: a faint, quickening pulse ratchets the dread.
+        audio.heartbeat();
         break;
       case 'draw':
         audio.gunshot();
@@ -237,6 +263,15 @@ export function LobbyRoom({
         break;
     }
   }, [duel.phase, audio, duel.result, duel.selfId]);
+
+  // Recoil kick on the shot, and again as the body hits the dirt.
+  useEffect(() => {
+    if (duel.phase === 'draw') triggerShake(450);
+    if (duel.phase === 'showdown') {
+      const id = window.setTimeout(() => triggerShake(550), SHOWDOWN_FREEZE_AUDIO_MS);
+      return () => window.clearTimeout(id);
+    }
+  }, [duel.phase, triggerShake]);
 
   // Space bar is a draw fallback while armed.
   useEffect(() => {
@@ -264,29 +299,52 @@ export function LobbyRoom({
   const showStage = duel.phase !== 'idle';
 
   return (
-    <main className="relative h-[100dvh] w-screen overflow-hidden bg-night">
+    <main
+      className={cn(
+        'relative h-[100dvh] w-screen overflow-hidden bg-night',
+        shake && 'animate-shake',
+      )}
+    >
       {/* Source webcams - also the live framing behind the lobby UI. */}
       <video
         ref={setLocalEl}
         autoPlay
         playsInline
         muted
-        className="absolute left-0 top-0 h-full w-1/2 object-cover"
+        className={cn(
+          'absolute object-cover',
+          vertical ? 'left-0 top-0 h-1/2 w-full' : 'left-0 top-0 h-full w-1/2',
+        )}
         style={{ transform: 'scaleX(-1)' }}
       />
       <video
         ref={setRemoteEl}
         autoPlay
         playsInline
-        className="absolute right-0 top-0 h-full w-1/2 bg-charcoal object-cover"
+        className={cn(
+          'absolute bg-charcoal object-cover',
+          vertical ? 'bottom-0 left-0 h-1/2 w-full' : 'right-0 top-0 h-full w-1/2',
+        )}
       />
-      <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-black/60" />
+      <div
+        className={cn(
+          'absolute bg-black/60',
+          vertical
+            ? 'left-0 top-1/2 h-px w-full -translate-y-1/2'
+            : 'left-1/2 top-0 h-full w-px -translate-x-1/2',
+        )}
+      />
 
       {/* Green "ready" frames in the lobby. */}
       {duel.phase === 'idle' && (
         <>
-          <FrameRing side="left" ready={!!me?.ready} live={holster.holstered} />
-          <FrameRing side="right" ready={!!opp?.ready} />
+          <FrameRing
+            side="left"
+            ready={!!me?.ready}
+            live={holster.holstered}
+            vertical={vertical}
+          />
+          <FrameRing side="right" ready={!!opp?.ready} vertical={vertical} />
         </>
       )}
 
@@ -303,12 +361,19 @@ export function LobbyRoom({
           selfName={me?.name ?? name}
           oppName={opp?.name ?? 'Rival'}
           loserSide={loserSide}
+          onReady={onStageReady}
+          vertical={vertical}
         />
       )}
 
       {/* Hand-tracking circles: amber → green (on hip) → yellow (draw). */}
       {holsterActive && (
-        <HandOverlay video={localEl} markerRef={markerRef} drewRef={drewRef} />
+        <HandOverlay
+          video={localEl}
+          markerRef={markerRef}
+          drewRef={drewRef}
+          vertical={vertical}
+        />
       )}
 
       {/* Camera blocked - hard stop. */}
@@ -338,6 +403,30 @@ export function LobbyRoom({
         </Overlay>
       )}
 
+      {/* P2P couldn't connect - don't strand them on a silent blank panel. */}
+      {!camError &&
+        !duel.error &&
+        duel.phase === 'idle' &&
+        duel.players.length === 2 &&
+        webrtc.status === 'failed' && (
+          <Overlay>
+            <h2 className="font-display text-3xl text-bone">
+              Can&apos;t reach your rival
+            </h2>
+            <p className="mt-3 max-w-sm text-sand/70">
+              The connection couldn&apos;t punch through your networks. A quick
+              reconnect usually clears it.
+            </p>
+            <button
+              onClick={webrtc.retry}
+              className="mt-6 rounded-sm border-2 border-ember px-6 py-2 font-impact uppercase tracking-widest text-ember transition-colors hover:bg-ember hover:text-night"
+            >
+              Reconnect
+            </button>
+            <HomeLink />
+          </Overlay>
+        )}
+
       {/* Connecting. */}
       {!camError && !duel.error && duel.status === 'connecting' && (
         <Overlay>
@@ -354,6 +443,7 @@ export function LobbyRoom({
         duel.phase === 'idle' && (
           <LobbyOverlay
             lobbyId={lobbyId}
+            selfName={me?.name ?? name}
             meReady={!!me?.ready}
             oppName={opp?.name ?? null}
             oppReady={!!opp?.ready}
@@ -361,6 +451,9 @@ export function LobbyRoom({
             holstered={holster.holstered}
             pistol={holster.pistol}
             onManualReady={onManualReady}
+            bestOf={duel.bestOf}
+            myWins={myWins}
+            oppWins={oppWins}
           />
         )}
 
@@ -390,6 +483,7 @@ export function LobbyRoom({
           onRematch={onRematch}
           winnerPhoto={photos.winner}
           loserPhoto={photos.loser}
+          clip={clip}
         />
       )}
     </main>
@@ -400,16 +494,26 @@ function FrameRing({
   side,
   ready,
   live,
+  vertical,
 }: {
   side: 'left' | 'right';
   ready: boolean;
   live?: boolean;
+  vertical?: boolean;
 }) {
+  // 'left' is always the local player: left half in landscape, top in portrait.
+  const pos = vertical
+    ? side === 'left'
+      ? 'left-0 top-0 h-1/2 w-full'
+      : 'bottom-0 left-0 h-1/2 w-full'
+    : side === 'left'
+      ? 'left-0 top-0 h-full w-1/2'
+      : 'right-0 top-0 h-full w-1/2';
   return (
     <div
       className={cn(
-        'pointer-events-none absolute top-0 z-10 h-full w-1/2 border-4 transition-colors duration-300',
-        side === 'left' ? 'left-0' : 'right-0',
+        'pointer-events-none absolute z-10 border-4 transition-colors duration-300',
+        pos,
         ready
           ? 'border-green-500 shadow-[inset_0_0_60px_rgba(34,197,94,0.35)]'
           : live
@@ -424,10 +528,12 @@ function HandOverlay({
   video,
   markerRef,
   drewRef,
+  vertical,
 }: {
   video: HTMLVideoElement | null;
   markerRef: MutableRefObject<HandMarker[]>;
   drewRef: MutableRefObject<boolean>;
+  vertical?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -509,7 +615,10 @@ function HandOverlay({
   return (
     <canvas
       ref={canvasRef}
-      className="pointer-events-none absolute left-0 top-0 z-20 h-full w-1/2"
+      className={cn(
+        'pointer-events-none absolute left-0 top-0 z-20',
+        vertical ? 'h-1/2 w-full' : 'h-full w-1/2',
+      )}
     />
   );
 }
@@ -535,6 +644,7 @@ function HomeLink() {
 
 function LobbyOverlay({
   lobbyId,
+  selfName,
   meReady,
   oppName,
   oppReady,
@@ -542,8 +652,12 @@ function LobbyOverlay({
   holstered,
   pistol,
   onManualReady,
+  bestOf,
+  myWins,
+  oppWins,
 }: {
   lobbyId: string;
+  selfName: string;
   meReady: boolean;
   oppName: string | null;
   oppReady: boolean;
@@ -551,12 +665,20 @@ function LobbyOverlay({
   holstered: boolean;
   pistol: boolean;
   onManualReady: () => void;
+  bestOf: number;
+  myWins: number;
+  oppWins: number;
 }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      // Tag the link with the sharer's name so the preview reads
+      // "<name> challenges you to a duel" when it lands in a chat.
+      const url = new URL(window.location.href);
+      url.search = '';
+      if (selfName && selfName !== 'Stranger') url.searchParams.set('by', selfName);
+      await navigator.clipboard.writeText(url.toString());
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -574,6 +696,11 @@ function LobbyOverlay({
         <span className="font-impact text-xl tracking-widest text-bone">
           {lobbyId}
         </span>
+        {bestOf > 1 && (
+          <span className="rounded-sm border border-gold/60 px-2 py-1 font-impact text-xs uppercase tracking-widest text-gold">
+            Best of {bestOf} · {myWins}–{oppWins}
+          </span>
+        )}
         <button
           onClick={copy}
           className="ml-1 rounded-sm border border-dust px-2 py-1 text-xs uppercase tracking-widest text-sand/70 hover:border-ember hover:text-ember"

@@ -4,6 +4,7 @@ import {
   DUEL_TIMINGS,
   DuelEndReason,
   DuelResult,
+  DuelResultRecord,
   GameDrawPayload,
   GameStartPayload,
   LobbyErrorPayload,
@@ -13,9 +14,11 @@ import {
   PublicPlayer,
   ReactionOutcome,
   SocketEvents,
+  generateResultId,
   randomDelayMs,
 } from '@standoffduel/shared';
 import { ServerLobby, ServerPlayer } from './lobby.types';
+import { ResultsStore } from '../results/results.store';
 
 /**
  * Owns all lobby state and the duel clock. The server is the single source of
@@ -28,6 +31,8 @@ export class LobbyService {
   private readonly lobbies = new Map<string, ServerLobby>();
   private server!: Server;
 
+  constructor(private readonly results: ResultsStore) {}
+
   /** Called once from the gateway's `afterInit` so timers can emit later. */
   bindServer(server: Server): void {
     this.server = server;
@@ -37,7 +42,12 @@ export class LobbyService {
   // Joining / leaving
   // --------------------------------------------------------------------------
 
-  join(lobbyId: string, name: string, socketId: string): LobbyErrorPayload | null {
+  join(
+    lobbyId: string,
+    name: string,
+    socketId: string,
+    bestOf = 1,
+  ): LobbyErrorPayload | null {
     let lobby = this.lobbies.get(lobbyId);
     const existing = lobby?.players.find((p) => p.socketId === socketId);
 
@@ -51,7 +61,16 @@ export class LobbyService {
     }
 
     if (!lobby) {
-      lobby = { id: lobbyId, players: [], status: 'waiting', drawSignalAt: null, timers: [] };
+      lobby = {
+        id: lobbyId,
+        players: [],
+        status: 'waiting',
+        drawSignalAt: null,
+        timers: [],
+        bestOf: bestOf === 3 ? 3 : 1,
+        scores: {},
+        pendingNextRound: false,
+      };
       this.lobbies.set(lobbyId, lobby);
     }
 
@@ -100,6 +119,7 @@ export class LobbyService {
       this.clearTimers(lobby);
       lobby.status = 'finished';
       const survivor = lobby.players[0];
+      const id = generateResultId();
       const result: DuelResult = {
         winnerId: survivor.socketId,
         winnerName: survivor.name,
@@ -107,8 +127,24 @@ export class LobbyService {
         reactionMs: null,
         reason: 'opponent_left',
         reactions: {},
+        resultId: id,
+        bestOf: lobby.bestOf,
+        scores: { ...lobby.scores },
+        matchOver: true,
       };
+      void this.results.save({
+        id,
+        winnerName: survivor.name,
+        loserName: leaving?.name ?? null,
+        reactionMs: null,
+        reason: 'opponent_left',
+        isTie: false,
+        createdAt: Date.now(),
+      });
       this.server.to(lobby.id).emit(SocketEvents.GameResult, result);
+      // A forfeit ends the match - clear the score for whoever joins next.
+      lobby.scores = {};
+      lobby.pendingNextRound = false;
       this.resetPlayersForNextRound(lobby);
       this.broadcastState(lobby);
       return;
@@ -120,11 +156,13 @@ export class LobbyService {
       return;
     }
 
-    // Otherwise drop back to the waiting room.
+    // Otherwise drop back to the waiting room - a broken pairing voids the match.
     this.clearTimers(lobby);
     this.resetPlayersForNextRound(lobby);
     lobby.status = 'waiting';
     lobby.drawSignalAt = null;
+    lobby.scores = {};
+    lobby.pendingNextRound = false;
     this.broadcastState(lobby);
   }
 
@@ -149,10 +187,17 @@ export class LobbyService {
     if (!lobby) return;
 
     // Reset the room and wait for BOTH players to get back into position -
-    // don't pre-ready the one who clicked rematch.
+    // don't pre-ready the one who clicked.
     this.clearTimers(lobby);
     lobby.status = 'waiting';
     lobby.drawSignalAt = null;
+    if (lobby.pendingNextRound) {
+      // Advancing within a best-of-N match: keep the running score.
+      lobby.pendingNextRound = false;
+    } else {
+      // Fresh match.
+      lobby.scores = {};
+    }
     this.resetPlayersForNextRound(lobby);
     this.broadcastState(lobby);
   }
@@ -256,6 +301,14 @@ export class LobbyService {
       ? lobby.players.find((p) => p.socketId !== winner.socketId) ?? null
       : null;
 
+    // Tally the round, then decide whether the match is settled.
+    if (winner) {
+      lobby.scores[winner.socketId] = (lobby.scores[winner.socketId] ?? 0) + 1;
+    }
+    const needed = Math.ceil(lobby.bestOf / 2);
+    const topScore = Math.max(0, ...Object.values(lobby.scores));
+    const matchOver = lobby.bestOf <= 1 || topScore >= needed;
+
     const result: DuelResult = {
       winnerId: winner?.socketId ?? null,
       winnerName: winner?.name ?? null,
@@ -263,11 +316,41 @@ export class LobbyService {
       reactionMs: winner ? reactions[winner.socketId]?.ms ?? null : null,
       reason,
       reactions,
+      bestOf: lobby.bestOf,
+      scores: { ...lobby.scores },
+      matchOver,
     };
+
+    // Only the decisive result earns a shareable permalink - a best-of-three
+    // shouldn't spam a link per round. Fire-and-forget: a storage hiccup must
+    // never block the result reaching the players.
+    if (matchOver) {
+      const id = generateResultId();
+      result.resultId = id;
+      const record: DuelResultRecord = {
+        id,
+        winnerName: winner?.name ?? null,
+        loserName: loser?.name ?? null,
+        reactionMs: result.reactionMs,
+        reason,
+        isTie: winner === null,
+        createdAt: Date.now(),
+      };
+      void this.results.save(record);
+      lobby.pendingNextRound = false;
+    } else {
+      // Round over, match continues - keep the score, await the next round.
+      lobby.pendingNextRound = true;
+    }
+    // Per-round player state clears either way; the score lives on the lobby.
+    this.resetPlayersForNextRound(lobby);
 
     this.server.to(lobby.id).emit(SocketEvents.GameResult, result);
     this.broadcastState(lobby);
-    this.logger.log(`resolve ${lobby.id}: ${reason} winner=${result.winnerName ?? '-'}`);
+    this.logger.log(
+      `resolve ${lobby.id}: ${reason} winner=${result.winnerName ?? '-'} ` +
+        `score=[${Object.values(lobby.scores).join(',')}] matchOver=${matchOver}`,
+    );
   }
 
   // --------------------------------------------------------------------------
@@ -339,6 +422,8 @@ export class LobbyService {
         players,
         selfId: p.socketId,
         full,
+        bestOf: lobby.bestOf,
+        scores: { ...lobby.scores },
       };
       this.server.to(p.socketId).emit(SocketEvents.LobbyState, payload);
     }
