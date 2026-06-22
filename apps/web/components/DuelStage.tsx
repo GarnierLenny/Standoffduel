@@ -143,15 +143,18 @@ export function DuelStage(props: DuelStageProps) {
       let pw: number; // panel size
       let ph: number;
       if (vertical) {
-        contentW = W * strip;
-        contentX = (W - contentW) / 2;
+        // Full-width stacked panels. The eye push-in comes from `zoom` + focus;
+        // we skip the letterbox slit here because narrowing the width would crop
+        // the (horizontal) eyes sideways. Bars stay zero-width.
+        contentW = W;
+        contentX = 0;
         contentH = H;
         contentY = 0;
-        pw = contentW;
+        pw = W;
         ph = H / 2;
-        lx = contentX;
+        lx = 0;
         ly = 0; // local = top
-        rx = contentX;
+        rx = 0;
         ry = H / 2; // remote = bottom
       } else {
         contentH = H * strip;

@@ -109,10 +109,10 @@ export function useWebRTC(
         setStatus('connected');
       });
       peer.on('connect', () => {
+        // The data channel is open, but this is a *video* app: only the remote
+        // stream counts as connected. If media never arrives the timeout still
+        // fires 'failed', so a connected-but-blank panel can't hide a failure.
         setConnected(true);
-        // 'connect' fires when the data channel opens; keep waiting on media,
-        // but a working channel already rules out a dead connection.
-        if (statusRef.current !== 'connected') setStatus('connected');
       });
       peer.on('close', () => {
         setConnected(false);

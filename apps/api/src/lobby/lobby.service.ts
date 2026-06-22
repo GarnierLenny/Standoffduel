@@ -185,6 +185,9 @@ export class LobbyService {
   rematch(socketId: string): void {
     const lobby = this.findLobbyBySocket(socketId);
     if (!lobby) return;
+    // Ignore a second rematch racing in after the first already reset the room,
+    // otherwise a near-simultaneous double "Next round" wipes the match score.
+    if (lobby.status !== 'finished') return;
 
     // Reset the room and wait for BOTH players to get back into position -
     // don't pre-ready the one who clicked.

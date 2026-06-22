@@ -78,10 +78,10 @@ export function useDuelClip(
       } catch {
         /* ignore */
       }
-    }
-
-    // Stop once the cinematic settles on the result screen.
-    if (phase === 'result' && recRef.current) {
+    } else if (recRef.current && phase !== 'draw' && phase !== 'showdown') {
+      // Finalize on the result screen - or tear down if the duel was aborted
+      // back to the lobby, so the recorder can't leak onto a detached canvas
+      // and block every subsequent round.
       try {
         if (recRef.current.state !== 'inactive') recRef.current.stop();
       } catch {

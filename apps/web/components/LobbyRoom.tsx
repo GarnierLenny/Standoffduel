@@ -674,9 +674,10 @@ function LobbyOverlay({
   const copy = async () => {
     try {
       // Tag the link with the sharer's name so the preview reads
-      // "<name> challenges you to a duel" when it lands in a chat.
+      // "<name> challenges you to a duel" when it lands in a chat. Keep existing
+      // params (e.g. ?bo=3) so the match mode survives if the invitee's socket
+      // happens to create the lobby first.
       const url = new URL(window.location.href);
-      url.search = '';
       if (selfName && selfName !== 'Stranger') url.searchParams.set('by', selfName);
       await navigator.clipboard.writeText(url.toString());
       setCopied(true);

@@ -9,13 +9,14 @@ function pick(v: string | string[] | undefined): string {
   return Array.isArray(v) ? v[0] ?? '' : v ?? '';
 }
 
-// Results are immutable, so cache hard. Next dedupes this between
-// generateMetadata and the page render in the same request.
+// Always fetch fresh: a result may not be persisted yet the instant its link is
+// shared, and force-cache could pin that early 404 forever. Next still dedupes
+// this between generateMetadata and the page render in the same request.
 async function getRecord(id: string): Promise<DuelResultRecord | null> {
   if (!id) return null;
   try {
     const res = await fetch(`${apiUrl()}/results/${encodeURIComponent(id)}`, {
-      cache: 'force-cache',
+      cache: 'no-store',
     });
     if (!res.ok) return null;
     return (await res.json()) as DuelResultRecord;
