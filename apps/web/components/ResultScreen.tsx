@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DuelResult, PublicPlayer, ReactionOutcome } from '@standoffduel/shared';
 import { cn } from '@/lib/cn';
@@ -86,6 +86,35 @@ export function ResultScreen({
           ? 'The match is lost'
           : "You've been out-drawn";
 
+  // Best-of-N score beat: hold the running score, tick the winner's point up
+  // after a short delay, then reveal the result table. The pre-tick score is
+  // derived client-side (the round winner had one fewer point).
+  // No dramatic tally when a player just rage-quit - go straight to the result.
+  const showBeat = bestOf > 1 && result.reason !== 'opponent_left';
+  const [revealed, setRevealed] = useState(!showBeat);
+  const [ticked, setTicked] = useState(!showBeat);
+  const oppName = players.find((p) => p.id !== selfId)?.name ?? 'Rival';
+  const incremented =
+    result.winnerId != null && result.reason !== 'opponent_left';
+  const youScored = incremented && youWon;
+  const oppScored = incremented && !isTie && !youWon;
+  const myShown = ticked ? myWins : myWins - (youScored ? 1 : 0);
+  const oppShown = ticked ? oppWins : oppWins - (oppScored ? 1 : 0);
+
+  useEffect(() => {
+    if (!showBeat) return;
+    const tick = window.setTimeout(() => setTicked(true), 750);
+    // Only the deciding round opens the full sheriff/bandit table; a mid-match
+    // round stays on the scoreboard with a "Next round" prompt.
+    const reveal = matchOver
+      ? window.setTimeout(() => setRevealed(true), 1750)
+      : null;
+    return () => {
+      window.clearTimeout(tick);
+      if (reveal) window.clearTimeout(reveal);
+    };
+  }, [showBeat, matchOver]);
+
   // The shareable permalink (own OG card) when the result was persisted,
   // falling back to the homepage. Carried by every share path below.
   const permalink = () => {
@@ -158,20 +187,63 @@ export function ResultScreen({
       <RoughFilters />
       <TableDressing />
       <div className="relative z-10 mx-auto flex min-h-full max-w-5xl flex-col items-center justify-center gap-8 px-4 py-12">
-        <p className="font-impact text-center text-sm uppercase tracking-[0.4em] text-ember drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
-          {banner}
-        </p>
+        {!revealed ? (
+          <div className="flex flex-col items-center gap-6 text-center">
+            <div className="flex items-end gap-8 sm:gap-12">
+              <ScoreColumn label="You" value={myShown} accent={ticked && youScored} />
+              <span className="font-display pb-4 text-4xl text-sand/40 sm:text-5xl">
+                –
+              </span>
+              <ScoreColumn
+                label={oppName}
+                value={oppShown}
+                accent={ticked && oppScored}
+              />
+            </div>
+            <p className="font-impact text-xs uppercase tracking-[0.4em] text-sand/50">
+              Best of {bestOf}
+            </p>
+            {ticked && matchOver && !isTie && (
+              <p className="animate-score-pop font-display text-3xl text-ember drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
+                {youWon ? 'Match won' : 'Match over'}
+              </p>
+            )}
 
-        {bestOf > 1 && (
-          <p className="font-impact text-center text-3xl uppercase tracking-[0.3em] text-gold drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
-            {myWins} <span className="text-sand/40">–</span> {oppWins}
-            <span className="ml-3 align-middle text-xs text-sand/50">
-              best of {bestOf}
-            </span>
-          </p>
-        )}
+            {ticked && !matchOver && (
+              <div className="mt-2 flex flex-col items-center gap-4">
+                <p className="font-impact text-sm uppercase tracking-[0.35em] text-ember drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
+                  {banner}
+                </p>
+                <div className="flex flex-col items-center gap-3 sm:flex-row">
+                  <Button size="lg" onClick={onRematch}>
+                    Next round
+                  </Button>
+                  <Link
+                    href="/"
+                    className="text-xs uppercase tracking-widest text-sand/60 hover:text-sand"
+                  >
+                    ← Leave the lobby
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <p className="font-impact text-center text-sm uppercase tracking-[0.4em] text-ember drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
+              {banner}
+            </p>
 
-        {isTie ? (
+            {bestOf > 1 && (
+              <p className="font-impact text-center text-3xl uppercase tracking-[0.3em] text-gold drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">
+                {myWins} <span className="text-sand/40">–</span> {oppWins}
+                <span className="ml-3 align-middle text-xs text-sand/50">
+                  best of {bestOf}
+                </span>
+              </p>
+            )}
+
+            {isTie ? (
           <Newspaper
             name="THE STREET"
             photo={winnerPhoto ?? loserPhoto}
@@ -222,7 +294,36 @@ export function ResultScreen({
             ← Leave the lobby
           </Link>
         </div>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+function ScoreColumn({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  accent: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span className="max-w-[7rem] truncate font-impact text-xs uppercase tracking-[0.3em] text-sand/60">
+        {label}
+      </span>
+      <span
+        key={value}
+        className={cn(
+          'animate-score-pop font-display text-7xl leading-none drop-shadow-[0_3px_3px_rgba(0,0,0,0.85)] sm:text-8xl',
+          accent ? 'text-ember' : 'text-bone',
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }

@@ -107,3 +107,14 @@ body::before {
 .animate-shake {
   animation: screen-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
+
+/* Score tick - the winner's point pops up before the result table. */
+@keyframes score-pop {
+  0% { transform: scale(0.55); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-score-pop {
+  display: inline-block;
+  animation: score-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
