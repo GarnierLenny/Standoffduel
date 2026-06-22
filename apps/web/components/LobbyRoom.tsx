@@ -238,6 +238,7 @@ export function LobbyRoom({
     if (!audio) return;
     // Any phase other than the silent hold kills the heartbeat.
     audio.stopHeartbeat();
+    let distractTimer: number | undefined;
     switch (duel.phase) {
       case 'zoom':
         audio.startTension();
@@ -249,6 +250,14 @@ export function LobbyRoom({
       case 'wait':
         // Pull-back silence: a faint, quickening pulse ratchets the dread.
         audio.heartbeat();
+        // ~60% of the time, one random western disturbance (crow, fly, coyote,
+        // a hammer cocking) to rattle nerves - lands inside the >=3s hold.
+        if (Math.random() < 0.6) {
+          distractTimer = window.setTimeout(
+            () => audio.distract(),
+            700 + Math.random() * 2000,
+          );
+        }
         break;
       case 'draw':
         audio.gunshot();
@@ -262,6 +271,11 @@ export function LobbyRoom({
         if (duel.result?.winnerId === duel.selfId) audio.victory();
         break;
     }
+    // Cancel a pending disturbance if the draw fires (or we leave the room)
+    // first, so a crow can't caw after the gunshot.
+    return () => {
+      if (distractTimer !== undefined) window.clearTimeout(distractTimer);
+    };
   }, [duel.phase, audio, duel.result, duel.selfId]);
 
   // Recoil kick on the shot, and again as the body hits the dirt.

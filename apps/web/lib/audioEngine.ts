@@ -278,6 +278,182 @@ export class AudioEngine {
     o.stop(t + 0.2);
   }
 
+  // -------- Standoff distractions (atmosphere only) --------
+
+  /** Play one random western disturbance to rattle the duelists' nerves. */
+  distract(): void {
+    if (!this.ctx) return;
+    const picks = [
+      () => this.crowCaw(),
+      () => this.flyBuzz(),
+      () => this.coyoteHowl(),
+      () => this.hammerCock(),
+    ];
+    picks[Math.floor(Math.random() * picks.length)]();
+  }
+
+  /** Harsh, raspy two-note crow caw. */
+  private crowCaw(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const caw = (t: number, f0: number) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f0, t);
+      osc.frequency.exponentialRampToValueAtTime(f0 * 0.62, t + 0.18);
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1300;
+      bp.Q.value = 2.5;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.3, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      // Ring-mod the gain for the raspy crow grain.
+      const ring = ctx.createOscillator();
+      ring.type = 'square';
+      ring.frequency.value = 45;
+      const ringAmt = ctx.createGain();
+      ringAmt.gain.value = 0.22;
+      ring.connect(ringAmt);
+      ringAmt.connect(g.gain);
+      osc.connect(bp);
+      bp.connect(g);
+      g.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.24);
+      ring.start(t);
+      ring.stop(t + 0.24);
+    };
+    const t0 = ctx.currentTime;
+    caw(t0, 1000);
+    caw(t0 + 0.3, 920);
+  }
+
+  /** A fly circling your face - buzzing in and out, drifting side to side. */
+  private flyBuzz(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const dur = 2.4;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 170;
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 7;
+    const vibAmt = ctx.createGain();
+    vibAmt.gain.value = 18;
+    vib.connect(vibAmt);
+    vibAmt.connect(osc.frequency);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 950;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.09, t + 0.5);
+    g.gain.linearRampToValueAtTime(0.02, t + 1.1);
+    g.gain.linearRampToValueAtTime(0.1, t + 1.7);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    osc.connect(lp);
+    lp.connect(g);
+    const panner =
+      typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
+    if (panner) {
+      const pan = ctx.createOscillator();
+      pan.frequency.value = 0.7;
+      const panAmt = ctx.createGain();
+      panAmt.gain.value = 0.85;
+      pan.connect(panAmt);
+      panAmt.connect(panner.pan);
+      g.connect(panner);
+      panner.connect(ctx.destination);
+      pan.start(t);
+      pan.stop(t + dur);
+    } else {
+      g.connect(ctx.destination);
+    }
+    osc.start(t);
+    osc.stop(t + dur);
+    vib.start(t);
+    vib.stop(t + dur);
+  }
+
+  /** A lone coyote howl rolling across the plain - rise, hold, mournful fall. */
+  private coyoteHowl(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, t);
+    osc.frequency.exponentialRampToValueAtTime(520, t + 0.5);
+    osc.frequency.setValueAtTime(520, t + 1.1);
+    osc.frequency.exponentialRampToValueAtTime(340, t + 1.9);
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 5.5;
+    const vibAmt = ctx.createGain();
+    vibAmt.gain.value = 12;
+    vib.connect(vibAmt);
+    vibAmt.connect(osc.frequency);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 780;
+    bp.Q.value = 3;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.13, t + 0.5);
+    g.gain.setValueAtTime(0.13, t + 1.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.0);
+    osc.connect(bp);
+    bp.connect(g);
+    g.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 2.05);
+    vib.start(t);
+    vib.stop(t + 2.05);
+  }
+
+  /** The click-CLACK of a revolver hammer being thumbed back. */
+  private hammerCock(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const click = (when: number, hp: number, amp: number, dur: number) => {
+      const len = Math.floor(ctx.sampleRate * dur);
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) {
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const f = ctx.createBiquadFilter();
+      f.type = 'highpass';
+      f.frequency.value = hp;
+      const g = ctx.createGain();
+      g.gain.value = amp;
+      src.connect(f);
+      f.connect(g);
+      g.connect(ctx.destination);
+      src.start(when);
+    };
+    click(t, 2500, 0.45, 0.02); // cylinder tick
+    click(t + 0.12, 1800, 0.6, 0.035); // hammer lock, heavier
+    // A small low tock under the lock.
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(180, t + 0.12);
+    o.frequency.exponentialRampToValueAtTime(90, t + 0.17);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t + 0.12);
+    og.gain.exponentialRampToValueAtTime(0.22, t + 0.125);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(og);
+    og.connect(ctx.destination);
+    o.start(t + 0.12);
+    o.stop(t + 0.21);
+  }
+
   /** A low body-fall thud for the showdown beat. */
   thud(): void {
     const ctx = this.ctx;
